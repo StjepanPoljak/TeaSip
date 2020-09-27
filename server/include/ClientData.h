@@ -8,12 +8,19 @@
 struct ClientData {
 
 	std::string name;
-	const int socket_fd;
+	int socket_fd = -1;
+	bool connected = false;
 
 	ClientData(const int& fd): socket_fd(fd) {};
 
 	void addToBuffer(const char* part) noexcept {
 		this->buffer.append(std::string(part));
+	};
+
+	std::string flushBuffer() noexcept {
+		auto buff_old = this->buffer;
+		this->buffer.clear();
+		return buff_old;
 	};
 
 	~ClientData() = default;

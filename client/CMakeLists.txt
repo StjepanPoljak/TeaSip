@@ -6,6 +6,6 @@ set(CMAKE_CXX_STANDARD 11)
 
 file(GLOB SOURCES source/*.cpp)
 
-add_executable(tcp-server ${SOURCES})
+add_executable(tcp-client ${SOURCES})
 
 
