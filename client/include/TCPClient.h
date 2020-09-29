@@ -2,6 +2,7 @@
 #define TCP_CLIENT_H
 
 #include <string>
+#include <thread>
 
 struct TCPClient {
 
@@ -14,6 +15,9 @@ struct TCPClient {
 	void connectTo(int port);
 
 	~TCPClient() {};
+
+private:
+	std::thread receiveThread;
 };
 
 #endif

@@ -2,6 +2,7 @@
 #include <exception>
 #include <string>
 #include <regex>
+#include <thread>
 
 #include <sys/socket.h>	// socket, bind, listen
 #include <sys/types.h>	// socket, bind, listen
@@ -9,7 +10,43 @@
 #include <arpa/inet.h>	// inet_addr
 #include <unistd.h>	// close
 
+#include "common.h"
+
 #include "TCPClient.h"
+
+void receiveHandler(int fd) {
+
+	int ret { 0 };
+	std::string feedback { };
+	char buffer[BUFFER_SIZE] = { 0 };
+
+	while (true) {
+		ret = recv(fd, buffer, BUFFER_SIZE, 0);
+		if (ret < 0) {
+			throw std::runtime_error("Something went wrong.");
+		}
+		else if (ret == 0) {
+			std::cout << "Disconnected." << std::endl;
+		}
+		else {
+			feedback.append(buffer);
+			if (buffer[ret - 1] == '\n') {
+				(void)feedback.pop_back();
+				if (feedback == "QUIT"
+				 || feedback == "EXIT"
+				 || feedback == "DISCONNECT")
+					break;
+				else {
+					std::cout << feedback << std::endl;
+				}
+				feedback.clear();
+				memset(buffer, 0, BUFFER_SIZE);
+			}
+		}
+	}
+
+	return;
+}
 
 void TCPClient::connectTo(int port) {
 
@@ -40,25 +77,10 @@ void TCPClient::connectTo(int port) {
 	else if (!ret)
 		std::cout << "Connected..." << std::endl;
 
+	receiveThread = std::thread(receiveHandler, fd);
+
 	return;
 }
-
-/* inspired by answer on SO */
-std::string trim(const std::string& string)
-{
-	size_t first, last;
-	
-	first = string.find_first_not_of(' ');
-
-	if (std::string::npos == first)
-		return string;
-
-	last = string.find_last_not_of(' ');
-
-	return string.substr(first, (last - first + 1));
-}
-
-#define REGEX(r) std::regex_match(input, match, std::regex(r))
 
 void TCPClient::start() {
 
@@ -67,9 +89,7 @@ void TCPClient::start() {
 	std::smatch match;
 
 	while (true) {
-		std::cout << "> ";
 		std::getline(std::cin, input);
-
 		input = trim(input);
 
 		if (REGEX("^CONNECT\\s+([0-9]+)\\s+([a-zA-Z0-9_]+)$")) {
@@ -85,23 +105,28 @@ void TCPClient::start() {
 			}
 		}
 		else if (REGEX("^DISCONNECT$")) {
-			if (fd >= 0) {
-				close(this->fd);
-				this->fd = -1;
-			}
-			else {
+			if (fd < 0)
 				std::cout << "(!) Already disconnected."
 					  << std::endl;
-			}
-			continue;
-		
 		}
 		else if (REGEX("^(QUIT|EXIT)$")) {
-			return;
+			if (fd < 0) {
+				std::cout << "Exiting..." << std::endl;
+				break;
+			}
 		}
 
 		input.append("\n");
 		ret = send(fd, input.c_str(), input.length(), 0);
+
+		if (input == "QUIT\n" || input == "EXIT\n") {
+			receiveThread.join();
+			break;
+		}
+		else if (input == "DISCONNECT\n") {
+			receiveThread.join();
+			continue;
+		}
 	}
 
 	return;

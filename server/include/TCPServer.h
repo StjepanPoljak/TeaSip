@@ -9,6 +9,8 @@
 #include "ClientData.h"
 #include "Topic.h"
 
+#define ADD_TOPIC(name) this->topics[name] = std::unique_ptr<Topic>(new Topic { name })
+
 struct TCPServer
 {
 	TCPServer(int port): port(port) {};
@@ -29,7 +31,8 @@ struct TCPServer
 private:
 	int port;
 	std::unordered_map<int, std::unique_ptr<ClientData>> clients;
-	std::unordered_map<std::string, Topic> topics;
+	std::unordered_map<std::string, std::unique_ptr<Topic>> topics;
+	void checkTopic(const std::string& topic) const;
 };
 
 #endif

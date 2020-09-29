@@ -10,6 +10,8 @@
 #include <arpa/inet.h>	// inet_addr
 #include <unistd.h>	// close
 
+#include "common.h"
+
 #include "TCPServer.h"
 #include "ClientData.h"
 #include "Topic.h"
@@ -18,14 +20,12 @@
 	" (" + std::to_string(errno) + ")"
 
 #define BACKLOG 3	// max. number of pending connections in listen()
-#define TIMEOUT 120	// timeout in select()
 
 void TCPServer::start() {
 
 	int fd, max_fd, ret, client_fd;
 	struct sockaddr_in saddr;
 	fd_set sock_fds, sock_fds_temp;
-	struct timeval timeout{ TIMEOUT, 0 }; // 2min
 	int optval = 1;
 	static int last_uid = 0;
 
@@ -65,6 +65,10 @@ void TCPServer::start() {
 	FD_SET(fd, &sock_fds);
 	max_fd = fd;
 
+	// HARDCODE SOME TOPICS
+	ADD_TOPIC("topic1");
+	ADD_TOPIC("topic2");
+
 	while (true) {
 
 		/* copy sock_fds to sock_fds_temp so we don't confuse
@@ -72,7 +76,7 @@ void TCPServer::start() {
 
 		memcpy(&sock_fds_temp, &sock_fds, sizeof(sock_fds));
 
-		ret = select(max_fd + 1, &sock_fds_temp, NULL, NULL, &timeout);
+		ret = select(max_fd + 1, &sock_fds_temp, NULL, NULL, NULL);
 
 		if (ret < 0)
 			throw std::runtime_error(
@@ -104,7 +108,7 @@ void TCPServer::start() {
 			catch (std::exception& ex) {
 				std::cout << "Could not accept connection: "
 					  << ex.what();
-				return;
+				continue;
 			}
 	
 			try {
@@ -142,13 +146,70 @@ int TCPServer::acceptClient(const int& fd) const {
 	return client_fd;
 }
 
+void TCPServer::checkTopic(const std::string& topic) const {
+
+	if (this->topics.find(topic) == this->topics.end())
+		throw std::runtime_error("Topic does not exist.");
+}
+
+void sendInvalidTopicError(const int& fd, const std::string& error) {
+	(void)send(fd, error.c_str(), error.length(), 0);
+}
+
 void TCPServer::processData(const int& fd) {
 
+	std::string input { };
+	std::smatch match;
 	auto buf = this->clients[fd]->flushBuffer();
 
 	(void)buf.pop_back();
+	input = trim(buf);
 
-	std::cout << buf << std::endl;
+	if (REGEX("^SETNAME\\s+([a-zA-Z0-9_]+)$")) {
+		std::cout << "Set name to: " << match[1].str() << std::endl;
+		this->clients[fd]->name = match[1].str();
+	}
+	else if (REGEX("^SUBSCRIBE\\s+([a-zA-Z0-9_]+)$")) {
+		std::cout << "Subscribing to " << match[1].str() << std::endl;
+		try {
+			this->topics[match[1].str()]->subscribe(fd);
+		}
+		catch (std::exception& e) {
+			sendInvalidTopicError(fd, e.what());
+		}
+	}
+	else if (REGEX("^UNSUBSCRIBE\\s+([a-zA-Z0-9_]+)$")) {
+		std::cout << "Unsubscribe from " << match[1].str() << std::endl;
+		try {
+			this->checkTopic(match[2].str());
+			this->topics[match[1].str()]->unsubscribe(fd);
+		}
+		catch (std::exception& e) {
+			sendInvalidTopicError(fd, e.what());
+		}
+	}
+	else if (REGEX("^PUBLISH\\s+([a-zA-Z0-9_]+)\\s+(.*)$")) {
+		std::cout << "Publishing." << std::endl;
+		try {
+			this->checkTopic(match[1].str());
+			auto match_str = match[2].str();
+			this->topics[match[1].str()]->forEachSubscriber([&match_str](int sfd){
+				(void)send(sfd, match_str.c_str(), match_str.length(), 0);
+			});
+		}
+		catch (std::exception& e) {
+			sendInvalidTopicError(fd, e.what());
+		}
+	}
+	else if (input == "QUIT" || input == "EXIT" || input == "DISCONNECT") {
+		(void)send(fd, "QUIT\n", 5, 0);
+		std::cout << "Informing client to quit." << std::endl;
+	}
+	else {
+		std::string error { "Invalid command.\n" };
+		(void)send(fd, error.c_str(), error.length(), 0);
+		std::cout << "Invalid command." << std::endl;
+	}
 
 	return;
 }
@@ -169,8 +230,10 @@ void TCPServer::receiveData(const int& fd, fd_set& sock_fds) {
 	else {
 		this->clients[fd]->addToBuffer(buffer);
 
-		if (buffer[data_len - 1] == '\n')
+		if (buffer[data_len - 1] == '\n') {
+			memset(buffer, 0, BUFFER_SIZE);
 			this->processData(fd);
+		}
 
 		return;
 	}
